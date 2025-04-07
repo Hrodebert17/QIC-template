@@ -72,6 +72,8 @@ public:
     }
     return this->tables_ptr;
   }
+  bool is_open() { return this->open; }
+  std::vector<std::filesystem::path> get_all_tables() { return this->content; }
 
 private:
   std::filesystem::path path;
