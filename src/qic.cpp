@@ -7,8 +7,10 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <ncurses.h>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -255,27 +257,26 @@ void data_base::save() {
           }
           auto tables = table.second.second;
           auto size = tables.size();
-          if (size == 0) {
-            continue;
-          }
           int thread_to_use = this->compiling_threads;
           while (thread_to_use > size) {
             thread_to_use -= 1;
           }
-          while (size % thread_to_use != 0) {
-            thread_to_use -= 1;
-          }
-          size_t chunkSize = size / thread_to_use;
-          std::vector<std::thread> threads;
-          for (int i = 0; i < thread_to_use; i++) {
-            size_t start = i * chunkSize;
-            size_t end = (i + 1) * chunkSize;
-            threads.emplace_back([start, end, &content, &tables, &type]() {
-              handleThread(start, end, content, &tables, &type);
-            });
-          }
-          for (int i = 0; i < threads.size(); i++) {
-            threads.at(i).join();
+          if (size != 0) {
+            while (size % thread_to_use != 0) {
+              thread_to_use -= 1;
+            }
+            size_t chunkSize = size / thread_to_use;
+            std::vector<std::thread> threads;
+            for (int i = 0; i < thread_to_use; i++) {
+              size_t start = i * chunkSize;
+              size_t end = (i + 1) * chunkSize;
+              threads.emplace_back([start, end, &content, &tables, &type]() {
+                  handleThread(start, end, content, &tables, &type);
+              });
+            }
+            for (int i = 0; i < threads.size(); i++) {
+              threads.at(i).join();
+            }
           }
           ifFile.close();
           std::ofstream offFile(this->path / (table.first + ".table"));
@@ -419,4 +420,74 @@ operation data_base::load_table(std::string table) {
     returnValue.error = "Database not open";
   }
   return returnValue;
+}
+
+table_vec parse_and_execute(data_base *db, std::string &input_string) {
+  // Split the input string into parts
+  std::istringstream stream(input_string);
+  std::vector<std::string> words;
+  std::string word;
+  std::string table_name;
+  while (stream >> word) {
+    words.push_back(word);
+  }
+  auto container = db->container_execute();
+  for (int i = 0; i < words.size(); i++) {
+    auto current_word = words.at(i);
+    if (current_word == "select") {
+      if (i + 1 < words.size()) {
+        i++;
+        container->select(words.at(i));
+        continue;
+      }
+    } else if (current_word == "delete") {
+      if (i + 1 < words.size()) {
+        i++;
+        container->remove(words.at(i));
+        continue;
+      }
+    }
+    if (current_word == "from") {
+      if (i + 1 < words.size()) {
+        i++;
+        table_name = words.at(i);
+        container->from(words.at(i));
+        continue;
+      }
+    }
+    if (current_word == "where") {
+      if (i + 2 < words.size()) {
+        std::any is;
+        std::string coll = words.at(i + 1);
+        std::string value_str = words.at(i + 2);
+        // Retrieve table header to determine type
+        auto header_map = db->get_table_content_header(table_name);
+        auto type = header_map[coll];
+
+        // Convert value to the proper type using std::any
+        switch (type) {
+          case INT:
+            is = std::stoi(value_str);
+                break;
+          case DOUBLE:
+            is = std::stod(value_str);
+                break;
+          case FLOAT:
+            is = std::stof(value_str);
+                break;
+          case STRING:
+            is = value_str; // Already a string
+                break;
+          case BOOL:
+            is = (value_str == "true" || value_str == "1");
+                break;
+
+        }
+        i += 2;
+        container->where(coll,is, false);
+        continue;
+      }
+    }
+  }
+  return container->get_output();
 }
